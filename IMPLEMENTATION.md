@@ -17,7 +17,7 @@ Full-stack editorial application using React/Vinext, Cloudflare D1 and R2, and S
 
 ## Integration boundaries
 
-Live Facebook actions require a valid app/Page configuration and server secrets; no live API verification has been performed without credentials. The release includes Page-token onboarding and Facebook OAuth with expiring single-use state and Page selection. Both require live validation against the configured app. Native scheduling executes on Meta once accepted; saved local plans do not automatically submit themselves.
+Live Page-token retrieval, encrypted onboarding and connection health have passed locally for the four authorized city Pages; see VERIFICATION.md. The release includes Facebook OAuth with expiring single-use state, optional Facebook Login for Business configuration ID and Page selection. The application OAuth callback, token renewal and post delivery still require live validation. Native scheduling executes on Meta once accepted; saved local plans do not automatically submit themselves.
 
 The built-in Gemini adapter needs GEMINI_API_KEY and a supported GEMINI_MODEL. The optional alternative AI_SERVICE_URL must implement the contract in public/api-requirements.txt; it is a bridge, not an arbitrary vendor API URL. See [the official generateContent reference](https://ai.google.dev/api/generate-content). Live quality has not been verified without credentials.
 

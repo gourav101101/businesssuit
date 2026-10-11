@@ -1,13 +1,18 @@
 import { access, audit, bindings, failure, identity, initial, sameOrigin, save } from '@/lib/server';
 import { blankData, freshPost, distribute, epoch } from '@/lib/model';
+import { captionWarnings } from '@/lib/import';
+import { healthTable } from '@/lib/token-health';
+import { applyBulk, validatePlace, previewBulk } from '@/lib/bulk-edit';
 export async function GET(req: Request) { try {
     const id = new URL(req.url).searchParams.get('id');
     if (!id)
         return Response.json({ workspaces: (await initial()).map(r => ({ id: r.id, name: r.name })) });
     const a = await access(id);
     const { DB } = bindings();
+    await healthTable();
+    const storedHealth=await DB.prepare('SELECT result FROM connection_health WHERE workspace_id=?').bind(id).first<{result:string}>();
     const [members, events, assets, connection] = await Promise.all([DB.prepare('SELECT id,email,role FROM members WHERE workspace_id=?').bind(id).all(), DB.prepare('SELECT * FROM events WHERE workspace_id=? ORDER BY created_at DESC LIMIT 100').bind(id).all(), DB.prepare('SELECT id,name,type,size,created_at FROM assets WHERE workspace_id=? ORDER BY created_at DESC').bind(id).all(), DB.prepare('SELECT page_id,page_name FROM connections WHERE workspace_id=?').bind(id).first()]);
-    return Response.json({ data: a.data, revision: a.w.revision, role: a.role, members: members.results, events: events.results, assets: assets.results, connection });
+    return Response.json({ data: a.data, revision: a.w.revision, role: a.role, members: members.results, events: events.results, assets: assets.results, connection, health: storedHealth ? JSON.parse(storedHealth.result) : null });
 }
 catch (e) {
     return failure(e);
@@ -55,11 +60,13 @@ export async function POST(req: Request) {
             for (const p of b.posts) {
                 if (!String(p.caption || '').trim() && !String(p.title || '').trim())
                     throw new Error('Every post needs a title or caption.');
-                d.posts.push(freshPost({ title: String(p.title || p.caption?.split('\n')[0] || 'Imported story').slice(0, 150), caption: String(p.caption || '').slice(0, 20000), media: String(p.media || ''), sourceMedia: String(p.sourceMedia || ''), source: String(p.source || ''), sourceDate: String(p.sourceDate || ''), sourcePage: String(p.sourcePage || ''), date: String(p.date || ''), time: String(p.time || ''), category: String(p.category || 'City news'), template: ['editorial', 'minimal', 'bulletin'].includes(p.template) ? p.template : 'editorial', color: /^#[0-9a-f]{6}$/i.test(p.color || '') ? p.color : d.brand.color }));
+                d.posts.push(freshPost({ title: String(p.title || p.caption?.split('\n')[0] || 'Imported story').slice(0, 150), caption: String(p.caption || '').slice(0, 20000), location: String(p.location||'').replace(/[\r\n]/g,' ').slice(0,160), placeId: validatePlace(p.placeId), media: String(p.media || ''), sourceMedia: String(p.sourceMedia || ''), source: String(p.source || ''), sourceDate: String(p.sourceDate || ''), sourcePage: String(p.sourcePage || ''), date: String(p.date || ''), time: String(p.time || ''), category: String(p.category || 'City news'), template: ['editorial', 'minimal', 'bulletin'].includes(p.template) ? p.template : 'editorial', color: /^#[0-9a-f]{6}$/i.test(p.color || '') ? p.color : d.brand.color }));
             }
             message = `Imported ${b.posts.length} draft posts`;
         }
         else if (b.action === 'edit') {
+            if(b.post.placeId!==undefined)b.post.placeId=validatePlace(b.post.placeId);
+            if(b.post.location!==undefined && (typeof b.post.location!=='string'||b.post.location.length>160||/[\r\n]/.test(b.post.location)))throw new Error('Location must be one line, up to 160 characters.');
             const p = d.posts.find(p => p.id === b.post.id);
             if (!p)
                 throw new Error('Post not found');
@@ -67,7 +74,7 @@ export async function POST(req: Request) {
                 throw new Error('Reconcile or cancel the remote delivery before editing. Published posts can be corrected by creating a new draft.');
             p.history.unshift({ at: new Date().toISOString(), title: p.title, caption: p.caption, version: p.version });
             p.history = p.history.slice(0, 20);
-            for (const k of ['title', 'caption', 'category', 'media', 'sourceMedia', 'source', 'sourceDate', 'sourcePage', 'date', 'time', 'template', 'color'] as const)
+            for (const k of ['title', 'caption', 'category', 'media', 'sourceMedia', 'source', 'sourceDate', 'sourcePage', 'date', 'time', 'template', 'color', 'location', 'placeId'] as const)
                 if (typeof b.post[k] === 'string')
                     p[k] = b.post[k].slice(0, k === 'caption' ? 20000 : 1000);
             p.version++;
@@ -85,18 +92,12 @@ export async function POST(req: Request) {
             message = 'Reordered library. Existing schedule times are unchanged.';
         }
         else if (b.action === 'bulkEdit') {
-            const selected = d.posts.filter(p => b.ids.includes(p.id));
-            if (selected.some(p => ['scheduled', 'published', 'unknown', 'submitting'].includes(p.status)))
-                throw new Error('Resolve remote deliveries before bulk editing.');
-            for (const p of selected) {
-                p.history.unshift({ at: new Date().toISOString(), title: p.title, caption: p.caption, version: p.version });
-                p.history = p.history.slice(0, 20);
-                p.caption = (p.caption + '\n\n' + String(b.text || '')).slice(0, 20000);
-                p.version++;
-                p.approvedVersion = undefined;
-                p.status = 'review';
-            }
-            message = 'Updated ' + selected.length + ' captions; approval reset';
+            const options=b.options || {suffix:String(b.text||'')};
+            for(const value of Object.values(options))if(typeof value!=='string')throw new Error('Bulk values must be text.');
+            const result=applyBulk(d.posts,b.ids,options);
+            d.posts=result.posts;
+            if(d.queue) d.queue.ids=d.queue.ids.filter(id=>!b.ids.includes(id));
+            message = `Updated ${result.changed} posts; changed posts need approval again. Selected posts removed from pending queue.`;
         }
         else if (b.action === 'copy') {
             if (b.target === b.id)
@@ -145,8 +146,12 @@ export async function POST(req: Request) {
             for (const p of d.posts.filter(p => b.ids.includes(p.id))) {
                 if (!['draft', 'review', 'approved'].includes(p.status))
                     throw new Error('Only drafts and review posts can be approved');
-                if (!p.caption.trim() || !p.media || !p.source.trim())
-                    throw new Error('Add caption, image and source before approval.');
+                if (!p.caption.trim())
+                    throw new Error('Add a complete caption before approval: ' + p.title);
+                if (!p.media)
+                    throw new Error('Select an image before approval: ' + p.title);
+                if (captionWarnings(p.caption).length)
+                    throw new Error('Replace the placeholder caption with the complete story before approval: ' + p.title);
                 p.status = 'approved';
                 p.approvedVersion = p.version;
             }
@@ -171,6 +176,23 @@ export async function POST(req: Request) {
         else if (b.action === 'pause') {
             d.paused = Boolean(b.paused);
             message = d.paused ? 'Local submissions paused. Existing Meta schedules are unchanged.' : 'Local submissions resumed';
+        }
+        else if (b.action === 'savePreset') {
+            const name=String(b.name||'').trim();
+            if(!name||name.length>60)throw new Error('Preset name must be 1–60 characters.');
+            const options:Record<string,string>={};
+            for(const key of ['location','placeId','category','prefix','suffix'])if(b.options?.[key]!==undefined){if(typeof b.options[key]!=='string'||b.options[key].length>2000)throw new Error('Preset fields must be text up to 2,000 characters.');options[key]=b.options[key];}
+            if(!Object.keys(options).length)throw new Error('Add a location, category or caption text first.');
+            previewBulk(freshPost(),options);
+            const presets=d.presets||[];
+            if(presets.some(p=>p.name.toLowerCase()===name.toLowerCase()))throw new Error('That preset name already exists. Use another name or remove the old preset.');
+            if(presets.length>=20)throw new Error('This workspace supports up to 20 presets.');
+            d.presets=[...presets,{id:crypto.randomUUID(),name,options}];
+            message='Saved workspace preset. No posts changed.';
+        }
+        else if(b.action==='deletePreset') {
+            d.presets=(d.presets||[]).filter(p=>p.id!==b.presetId);
+            message='Removed preset. Posts are unchanged.';
         }
         else if (b.action === 'brand') {
             for (const k of ['name', 'city', 'color', 'initials', 'disclaimer', 'start', 'end', 'logo'] as const)

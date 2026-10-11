@@ -3,6 +3,8 @@ export type Post = {
     id: string;
     title: string;
     caption: string;
+    location?: string;
+    placeId?: string;
     category: string;
     media: string;
     sourceMedia: string;
@@ -25,6 +27,9 @@ export type Post = {
         title: string;
         caption: string;
         version: number;
+        location?: string;
+        placeId?: string;
+        category?: string;
     }[];
 };
 export type Brand = {
@@ -39,9 +44,11 @@ export type Brand = {
     logo: string;
 };
 export type Data = {
+    presets?: {id:string;name:string;options:import('./bulk-edit').BulkOptions}[];
     brand: Brand;
     posts: Post[];
     paused: boolean;
+    queue?: { ids: string[]; pageId?: string; inFlight?: string; stopped?: string; updatedAt: string };
 };
 export const statuses: Status[] = ['draft', 'review', 'approved', 'planned', 'submitting', 'scheduled', 'published', 'failed', 'unknown', 'cancelled'];
 export const statusLabels: Record<Status, string> = { draft: 'Draft', review: 'Needs review', approved: 'Approved', planned: 'Planned locally', submitting: 'Submitting', scheduled: 'On Facebook', published: 'Published', failed: 'Failed', unknown: 'Needs reconciliation', cancelled: 'Cancelled' };

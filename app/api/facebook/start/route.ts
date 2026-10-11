@@ -15,7 +15,14 @@ export async function GET(req: Request) { try {
     auth.searchParams.set('client_id', String(e.META_APP_ID));
     auth.searchParams.set('redirect_uri', url.origin + '/api/facebook/callback');
     auth.searchParams.set('state', state);
-    auth.searchParams.set('scope', 'pages_show_list,pages_read_engagement,pages_manage_posts');
+    if (e.META_LOGIN_CONFIG_ID) {
+        if (!/^\d+$/.test(String(e.META_LOGIN_CONFIG_ID)))
+            throw new Error('META_LOGIN_CONFIG_ID must be a numeric Facebook Login for Business configuration ID.');
+        auth.searchParams.set('config_id', String(e.META_LOGIN_CONFIG_ID));
+    }
+    else {
+        auth.searchParams.set('scope', 'pages_show_list,pages_read_engagement,pages_manage_posts');
+    }
     auth.searchParams.set('response_type', 'code');
     return Response.redirect(auth.toString(), 302);
 }

@@ -17,6 +17,8 @@ FACEBOOK PAGE PUBLISHING
    https://YOUR-SITE/api/facebook/callback as an exact valid redirect URL.
    OAuth state is encrypted, expires and is single-use. A Page selection
    screen completes connection. Meta App Review remains an external process.
+   Set META_LOGIN_CONFIG_ID when using a Facebook Login for Business configuration.
+   Local settings belong in ignored .dev.vars. Do not send app secrets in chat.
 
 AI EXTRACTION AND CAPTIONS
 Built-in Google Gemini adapter:

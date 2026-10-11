@@ -80,6 +80,9 @@ export function sites({ mockAuth = true } = {}): Plugin {
           return;
         }
 
+        // First-owner setup is allowed only on this verified loopback dev request.
+        // This marker grants no access to newsroom data or scheduling APIs.
+        setHeader(request, "oai-authenticated-user-local-setup", "1");
         const cookies = (request.headers.cookie ?? "")
           .split(";")
           .map((cookie) => cookie.trim())

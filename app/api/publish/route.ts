@@ -1,25 +1,38 @@
-import { access, audit, bindings, failure, sameOrigin, save } from '@/lib/server';
-import { connection, graph } from '@/lib/meta';
+import { access, accessAs, audit, bindings, failure, sameOrigin, save } from '@/lib/server';
+import { connection, graph, verifyDelivery } from '@/lib/meta';
 import { epoch } from '@/lib/model';
-export async function POST(req: Request) {
+import { captionWarnings } from '@/lib/import';
+import { publicationCaption, validatePlace } from '@/lib/bulk-edit';
+export async function POST(req: Request) { return runPublish(req); }
+export async function runPublish(req: Request, actor?: { userId: string; email: string }) {
     try {
         sameOrigin(req);
         const b = await req.json() as any;
-        const a = await access(b.id, ['owner', 'publisher']);
+        const a = actor ? await accessAs(b.id, actor, ['owner', 'publisher']) : await access(b.id, ['owner', 'publisher']);
         const c = await connection(b.id);
         const p = a.data.posts.find(p => p.id === b.postId);
         if (!p)
             throw new Error('Post not found');
         if (b.action === 'reconcile') {
+            let scheduledAt: number | null = null;
             if (!p.remoteId)
                 throw new Error('No remote ID available. Inspect the Page manually; do not blindly retry this delivery.');
-            const remote = await graph(`${p.remoteId}?fields=id,is_published,permalink_url`, c.token);
-            p.status = remote.is_published ? 'published' : 'scheduled';
-            p.permalink = remote.permalink_url || '';
-            p.error = '';
+            try {
+                const remote = await verifyDelivery(c.pageId, p.remoteId, c.token);
+                p.status = remote.status;
+                p.remoteId = remote.id;
+                p.permalink = remote.permalink;
+                p.error = '';
+                scheduledAt = remote.scheduledAt;
+            } catch (error) {
+                p.status = 'unknown';
+                p.error = error instanceof Error ? error.message : 'Verification failed';
+                await save(b.id, a.data, a.w.revision);
+                throw error;
+            }
             await save(b.id, a.data, a.w.revision);
             await audit(b.id, a.u.email, `Reconciled ${p.title}: ${p.status}`);
-            return Response.json({ ok: true });
+            return Response.json({ ok: true, pageId: c.pageId, remoteId: p.remoteId, status: p.status, scheduledAt, permalink: p.permalink });
         }
         if (b.action === 'cancel') {
             if (p.status !== 'scheduled' || !p.remoteId)
@@ -37,6 +50,8 @@ export async function POST(req: Request) {
             throw new Error('Approve the current post version before submission');
         if (!p.media || !p.caption)
             throw new Error('Image and caption are required');
+        if (captionWarnings(p.caption).length)
+            throw new Error('Replace the placeholder caption before submitting to Facebook.');
         const publishNow = b.action === 'now';
         if (!publishNow) {
             const lead = epoch(p) - Date.now() / 1000;
@@ -52,24 +67,39 @@ export async function POST(req: Request) {
         const media = await bindings().BUCKET.get(asset.id);
         if (!media)
             throw new Error('Image file unavailable');
+        validatePlace(p.placeId);
         p.status = 'submitting';
         p.error = '';
         await save(b.id, a.data, a.w.revision);
         try {
             const form = new FormData();
             form.set('source', new Blob([await media.arrayBuffer()], { type: asset.type }), 'post.' + asset.type.split('/')[1]);
-            form.set('message', p.caption);
             form.set('published', publishNow ? 'true' : 'false');
-            if (!publishNow)
-                form.set('scheduled_publish_time', String(epoch(p)));
-            const result = await graph(`${c.pageId}/photos`, c.token, { method: 'POST', body: form });
+            if (publishNow) {
+                form.set('message', publicationCaption(p));
+                if(p.placeId)form.set('place',validatePlace(p.placeId));
+            }
+            let result = await graph(`${c.pageId}/photos`, c.token, { method: 'POST', body: form });
+            if (!publishNow) {
+                if (!result.id) throw new Error('Facebook did not return the uploaded image ID.');
+                const feed = new URLSearchParams({
+                    message: publicationCaption(p),
+                    published: 'false',
+                    scheduled_publish_time: String(epoch(p)),
+                    unpublished_content_type: 'SCHEDULED',
+                    attached_media: JSON.stringify([{ media_fbid: result.id }]),
+                });
+                if(p.placeId)feed.set('place',validatePlace(p.placeId));
+                result = await graph(`${c.pageId}/feed`, c.token, { method: 'POST', body: feed });
+            }
             p.remoteId = result.post_id || result.id;
-            p.status = publishNow ? 'unknown' : 'scheduled';
+            p.status = 'unknown';
             if (p.remoteId) {
                 try {
-                    const remote = await graph(`${p.remoteId}?fields=id,is_published,permalink_url`, c.token);
-                    p.status = remote.is_published ? 'published' : publishNow ? 'unknown' : 'scheduled';
-                    p.permalink = remote.permalink_url || '';
+                    const remote = await verifyDelivery(c.pageId, p.remoteId, c.token);
+                    p.status = remote.status;
+                    p.remoteId = remote.id;
+                    p.permalink = remote.permalink;
                 }
                 catch {
                     p.error = 'Submission accepted; publication verification is pending.';

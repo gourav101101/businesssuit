@@ -1,5 +1,6 @@
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
+import { authEnv, sessionUser } from "@/lib/auth-store";
 export type ChatGPTUser = {
     userId: string;
     displayName: string;
@@ -16,6 +17,10 @@ const SIGN_OUT_PATH = "/signout-with-chatgpt";
 const CALLBACK_PATH = "/callback";
 export async function getChatGPTUser(): Promise<ChatGPTUser | null> {
     const requestHeaders = await headers();
+    const session = await sessionUser(requestHeaders);
+    if (session) return session;
+    const mode = authEnv().AUTH_MODE;
+    if (mode !== "sites") return null;
     const userId = requestHeaders.get(USER_ID_HEADER);
     const email = requestHeaders.get(USER_EMAIL_HEADER);
     if (!userId || !email)
@@ -36,7 +41,7 @@ export async function requireChatGPTUser(returnTo: string): Promise<ChatGPTUser>
     const user = await getChatGPTUser();
     if (user)
         return user;
-    redirect(chatGPTSignInPath(returnTo));
+    redirect(authEnv().AUTH_MODE === "sites" ? chatGPTSignInPath(returnTo) : `/login?return_to=${encodeURIComponent(safeRelativeReturnPath(returnTo))}`);
 }
 export function chatGPTSignInPath(returnTo: string): string {
     const safeReturnTo = safeRelativeReturnPath(returnTo);

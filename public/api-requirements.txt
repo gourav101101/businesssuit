@@ -1,0 +1,53 @@
+NEWSDESK — API SETUP CHECKLIST
+
+Works without external APIs: ZIP/CSV/TXT import, manual stories, source uploads,
+poster rendering, content editing, approvals, local scheduling, exports,
+brand workspaces, member roles, activity and workflow analytics.
+
+FACEBOOK PAGE PUBLISHING
+1. A Meta developer app with the Page publishing permissions appropriate to
+   your app and Page. Validate pages_show_list, pages_read_engagement and
+   pages_manage_posts in the current App Dashboard.
+2. The numeric Facebook Page ID and a Page access token with publishing rights.
+3. Server secret META_API_VERSION: a currently supported Graph API version.
+4. Server secret TOKEN_ENCRYPTION_KEY: at least 32 random characters.
+5. Connect the Page under Integrations; run connection health, then a controlled
+   publish/schedule/cancel test. Live delivery has not been tested without keys.
+6. For Facebook OAuth, add META_APP_ID and META_APP_SECRET and register
+   https://YOUR-SITE/api/facebook/callback as an exact valid redirect URL.
+   OAuth state is encrypted, expires and is single-use. A Page selection
+   screen completes connection. Meta App Review remains an external process.
+
+AI EXTRACTION AND CAPTIONS
+Built-in Google Gemini adapter:
+GEMINI_API_KEY: obtain from Google AI Studio.
+GEMINI_MODEL: an enabled model supporting image/PDF input and JSON output.
+No separate OCR API is necessary for this route. Live quality, quotas and
+model availability must be validated with your account and real source pages.
+Official reference: https://ai.google.dev/api/generate-content
+
+Alternative custom provider adapter (optional):
+AI_SERVICE_URL: your HTTPS provider-adapter endpoint.
+AI_SERVICE_KEY: a secret bearer credential for that endpoint.
+POST contract: {task,city,language,text,source:{name,mimeType,base64},instructions}
+Response: {stories:[{title,caption,source,sourcePage,category,warnings:[]}]}
+The service can bridge a vision/OCR provider and your chosen language model.
+For the custom route, the provider adapter must be configured/deployed.
+The built-in Gemini route only needs its key and supported model identifier.
+Existing Meta AI ZIP packs need no AI API.
+
+HOSTING
+Sites supplies D1 database, R2 file storage and ChatGPT sign-in.
+Workspace members also need access through the site's sharing policy.
+Keep this site private until your access requirements are reviewed.
+
+SCHEDULING
+Local plans are not unattended publish jobs. Submit them ahead of time to
+Facebook native scheduling (application window: 20 minutes–29 days).
+Never retry a response-loss outcome blindly. Reconcile or inspect Facebook.
+
+SEPARATE FUTURE INTEGRATIONS
+Reactions, comments and share-count requests are implemented; validate
+permission access with a connected Page. Reach/impressions need a separate
+versioned insights integration. Instagram, Reels and automated comments are not enabled.
+AI image generation is optional; templates already produce JPEG posters.
